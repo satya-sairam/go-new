@@ -27,8 +27,11 @@ jobs:
         run: |
           # Create tag from date and short commit SHA
           TAG="$(date +%Y%m%d)-${GITHUB_SHA::7}"
+          COMMIT_SHA="${GITHUB_SHA::7}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "commit_sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
           echo "✅ Generated TAG: ${TAG}"
+          echo "✅ Commit SHA: ${COMMIT_SHA}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -49,7 +52,7 @@ jobs:
           file: ./Dockerfile
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
-            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.commit_sha }}
           load: true
           cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
@@ -91,7 +94,7 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
-            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.commit_sha }}
           cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
 
       - name: Create and push Git tag
@@ -106,5 +109,5 @@ jobs:
         run: |
           echo "✅ Pipeline completed successfully!"
           echo "📦 Image pushed: ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
-          echo "📦 Latest tag updated: ${{ env.IMAGE_NAME }}:latest"
+          echo "📦 Commit tag: ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.commit_sha }}"
           echo "🏷️  Git tag created: ${{ steps.tag.outputs.tag }}"
