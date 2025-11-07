@@ -1,51 +1,89 @@
-name: Build & Push Docker Image on Tag
+name: Release Pipeline
 
 on:
   push:
     tags:
-      - "*"      # triggers on ANY tag push
+      - "*"
+
+env:
+  IMAGE_NAME: satya1122/myapp
 
 jobs:
-  build-and-push:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
+      # ----------------------------------------
+      # Checkout code
+      # ----------------------------------------
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Extract tag name (version)
-        run: echo "TAG=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+      # ----------------------------------------
+      # Extract Git Tag (example: v1.0.0)
+      # ----------------------------------------
+      - name: Extract Tag
+        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
 
-      - name: Docker login
+      # ----------------------------------------
+      # Docker Build Setup
+      # ----------------------------------------
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # ----------------------------------------
+      # Build image (load locally for scan)
+      # ----------------------------------------
+      - name: Build Docker Image (Local Only)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:${{ env.TAG }}
+
+      # ----------------------------------------
+      # Trivy Install
+      # ----------------------------------------
       - name: Install Trivy
         uses: aquasecurity/trivy-action@master
         with:
           version: latest
 
+      # ----------------------------------------
+      # Filesystem Scan (non-blocking)
+      # ----------------------------------------
       - name: Trivy Scan - Filesystem
         run: |
           echo "Running Trivy filesystem scan..."
           trivy fs --exit-code 0 --no-progress --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL .
 
+      # ----------------------------------------
+      # Image Scan (non-blocking)
+      # ----------------------------------------
       - name: Trivy Scan - Docker Image
         run: |
           echo "Running Trivy image scan..."
-          trivy image --exit-code 0 --no-progress --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL docker.io/${{ secrets.DOCKERHUB_USERNAME }}/test:${{ env.TAG }}
+          trivy image --exit-code 0 --no-progress --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL ${{ env.IMAGE_NAME }}:${{ env.TAG }}
 
-        
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build & Push Image with Tag
+      # ----------------------------------------
+      # Push image to DockerHub
+      # ----------------------------------------
+      - name: Build and Push Final Image
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ./Dockerfile
           push: true
-          tags: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/test:${{ env.TAG }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ env.TAG }}
+            ${{ env.IMAGE_NAME }}:latest
