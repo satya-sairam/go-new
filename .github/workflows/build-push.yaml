@@ -1,35 +1,29 @@
-name: Release Pipeline (commit/tag -> build -> scan -> push)
+name: Build, Scan & Push on Commit
 
 on:
   push:
-    tags:
-      - "*"
+    branches:
+      - main
 
 env:
   IMAGE_NAME: satya1122/myapp
+  TRIVY_VERSION: 0.58.0
 
 jobs:
   build-scan-push:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Extract TAG (from ref) and export to env
-        # IMPORTANT: use shell: bash so parameter expansion works
+      - name: Generate tag from commit
+        id: tag
         run: |
-          echo "GITHUB_REF='$GITHUB_REF'"
-          TAG="${GITHUB_REF#refs/tags/}"
-          echo "TAG=${TAG}" >> $GITHUB_ENV
-          echo "Derived TAG=${TAG}"
-        shell: bash
-
-      - name: Show env (debug)
-        run: |
-          echo "IMAGE_NAME=${IMAGE_NAME}"
-          echo "TAG=${{ env.TAG }}"
-          echo "GITHUB_SHA=${{ github.sha }}"
+          # Create tag from date and short commit SHA
+          TAG="$(date +%Y%m%d)-${GITHUB_SHA::7}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "✅ Generated TAG: ${TAG}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -44,51 +38,70 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker image (load locally for scanning)
-        id: build_local
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          tags: ${{ env.IMAGE_NAME }}:${{ env.TAG }}
-          load: true         # ensures the built image is available in local docker daemon for trivy
-          # cache-from/cache-to can be added for speed
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+            ${{ env.IMAGE_NAME }}:latest
+          load: true
+          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
 
-      - name: Show docker images (debug)
-        run: docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}"
+      - name: Show built images
+        run: docker images | grep ${{ env.IMAGE_NAME }}
 
       - name: Install Trivy
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y wget gnupg lsb-release
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-          echo "deb https://aquasecurity.github.io/trivy-repo/deb stable main" | sudo tee /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update -y
-          sudo apt-get install -y trivy
-        shell: bash
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v${{ env.TRIVY_VERSION }}
+          trivy --version
 
       - name: Trivy Scan - Filesystem (non-blocking)
         run: |
-          echo "Running Trivy filesystem scan (prints issues but won't fail)..."
-          trivy fs --exit-code 0 --no-progress --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL .
-        shell: bash
+          echo "🔍 Running Trivy filesystem scan..."
+          trivy fs \
+            --exit-code 0 \
+            --no-progress \
+            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            .
+        continue-on-error: true
 
       - name: Trivy Scan - Image (non-blocking)
         run: |
-          IMAGE=${IMAGE_NAME}:${TAG}
-          echo "Scanning local image: $IMAGE"
-          # ensure we scan the built image (not '.')
-          trivy image --exit-code 0 --no-progress --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL "$IMAGE"
-        env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
-          TAG: ${{ env.TAG }}
-        shell: bash
+          IMAGE="${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
+          echo "🔍 Scanning Docker image: ${IMAGE}"
+          trivy image \
+            --exit-code 0 \
+            --no-progress \
+            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            "${IMAGE}"
+        continue-on-error: true
 
-      - name: Push image to DockerHub (will run even if Trivy found issues)
+      - name: Push image to DockerHub
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ env.TAG }}
+            ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
             ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+
+      - name: Create and push Git tag
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a "${TAG}" -m "Automated release ${TAG}"
+          git push origin "${TAG}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "✅ Pipeline completed successfully!"
+          echo "📦 Image pushed: ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
+          echo "📦 Latest tag updated: ${{ env.IMAGE_NAME }}:latest"
+          echo "🏷️  Git tag created: ${{ steps.tag.outputs.tag }}"
