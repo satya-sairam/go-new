@@ -31,4 +31,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/myapp:${{ env.TAG }}
+          tags: docker.io/test:${{ env.TAG }}
