@@ -145,10 +145,13 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             TAG_NAME="${GITHUB_REF_NAME}"
           else
-            TAG_NAME="$(echo ${GITHUB_REF_NAME} | tr '/' '-')-latest"
+            SHORT_SHA="$(git rev-parse --short HEAD)"
+            BRANCH_NAME="${GITHUB_REF_NAME//\//-}"
+            TAG_NAME="${BRANCH_NAME}-${SHORT_SHA}"
           fi
+
           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          echo "Using tag: ${TAG_NAME}"
+          echo "🟦 Using image tag: ${TAG_NAME}"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
