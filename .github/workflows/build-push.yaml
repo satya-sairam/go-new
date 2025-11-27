@@ -1,9 +1,126 @@
-# name: Build, Scan & Push on Commit
+# # name: Build, Scan & Push on Commit
+
+# # on:
+# #   push:
+# #     branches:
+# #       - main
+
+# # env:
+# #   IMAGE_NAME: satya1122/myapp
+# #   TRIVY_VERSION: 0.58.0
+
+# # jobs:
+# #   build-scan-push:
+# #     runs-on: ubuntu-latest
+# #     permissions:
+# #       contents: write
+# #       packages: write
+
+# #     steps:
+# #       - name: Checkout code
+# #         uses: actions/checkout@v4
+# #         with:
+# #           fetch-depth: 0
+
+# #       - name: Generate tag from commit
+# #         id: tag
+# #         run: |
+# #           # Create tag from date and short commit SHA
+# #           TAG="$(date +%Y%m%d)-${GITHUB_SHA::7}"
+# #           COMMIT_SHA="${GITHUB_SHA::7}"
+# #           echo "tag=${TAG}" >> $GITHUB_OUTPUT
+# #           echo "commit_sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
+# #           echo " Generated TAG: ${TAG}"
+# #           echo " Commit SHA: ${COMMIT_SHA}"
+
+# #       - name: Set up QEMU
+# #         uses: docker/setup-qemu-action@v3
+
+# #       - name: Set up Docker Buildx
+# #         uses: docker/setup-buildx-action@v3
+
+# #       - name: Login to Docker Hub
+# #         uses: docker/login-action@v3
+# #         with:
+# #           username: ${{ secrets.DOCKERHUB_USERNAME }}
+# #           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+# #       - name: Build Docker image (load locally for scanning)
+# #         uses: docker/build-push-action@v5
+# #         with:
+# #           context: .
+# #           file: ./Dockerfile
+# #           tags: |
+# #             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+# #             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.commit_sha }}
+# #           load: true
+# #           cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+# #           cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+# #       - name: Show built images
+# #         run: docker images | grep ${{ env.IMAGE_NAME }}
+
+# #       - name: Install Trivy
+# #         run: |
+# #           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v${{ env.TRIVY_VERSION }}
+# #           trivy --version
+
+# #       - name: Trivy Scan - Filesystem (non-blocking)
+# #         run: |
+# #           echo " Running Trivy filesystem scan..."
+# #           trivy fs \
+# #             --exit-code 0 \
+# #             --no-progress \
+# #             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+# #             .
+# #         continue-on-error: true
+
+# #       - name: Trivy Scan - Image (non-blocking)
+# #         run: |
+# #           IMAGE="${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
+# #           echo " Scanning Docker image: ${IMAGE}"
+# #           trivy image \
+# #             --exit-code 0 \
+# #             --no-progress \
+# #             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+# #             "${IMAGE}"
+# #         continue-on-error: true
+
+# #       - name: Push image to DockerHub
+# #         uses: docker/build-push-action@v5
+# #         with:
+# #           context: .
+# #           file: ./Dockerfile
+# #           push: true
+# #           tags: |
+# #             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
+# #             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.commit_sha }}
+# #           cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+
+# #       - name: Create and push Git tag
+# #         run: |
+# #           TAG="${{ steps.tag.outputs.tag }}"
+# #           git config user.name "github-actions[bot]"
+# #           git config user.email "github-actions[bot]@users.noreply.github.com"
+# #           git tag -a "${TAG}" -m "Automated release ${TAG}"
+# #           git push origin "${TAG}"
+
+# #       - name: Summary
+# #         run: |
+# #           echo " Pipeline completed successfully!"
+# #           echo " Image pushed: ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
+# #           echo " Commit tag: ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.commit_sha }}"
+# #           echo "  Git tag created: ${{ steps.tag.outputs.tag }}"
+
+
+# name: Build, Scan & Push on Tag or Commit
 
 # on:
 #   push:
 #     branches:
-#       - main
+#       - '*'       # Trigger on all branches
+#     tags:
+#       - '*'       # Also trigger when a tag is pushed
 
 # env:
 #   IMAGE_NAME: satya1122/myapp
@@ -18,20 +135,23 @@
 
 #     steps:
 #       - name: Checkout code
-#         uses: actions/checkout@v4
+#         uses: actions/checkout@v5
 #         with:
 #           fetch-depth: 0
 
-#       - name: Generate tag from commit
-#         id: tag
+#       - name: Determine Image Tag
+#         id: vars
 #         run: |
-#           # Create tag from date and short commit SHA
-#           TAG="$(date +%Y%m%d)-${GITHUB_SHA::7}"
-#           COMMIT_SHA="${GITHUB_SHA::7}"
-#           echo "tag=${TAG}" >> $GITHUB_OUTPUT
-#           echo "commit_sha=${COMMIT_SHA}" >> $GITHUB_OUTPUT
-#           echo " Generated TAG: ${TAG}"
-#           echo " Commit SHA: ${COMMIT_SHA}"
+#           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+#             TAG_NAME="${GITHUB_REF_NAME}"
+#           else
+#             SHORT_SHA="$(git rev-parse --short HEAD)"
+#             BRANCH_NAME="${GITHUB_REF_NAME//\//-}"
+#             TAG_NAME="${BRANCH_NAME}-${SHORT_SHA}"
+#           fi
+
+#           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+#           echo "🟦 Using image tag: ${TAG_NAME}"
 
 #       - name: Set up QEMU
 #         uses: docker/setup-qemu-action@v3
@@ -46,13 +166,12 @@
 #           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
 #       - name: Build Docker image (load locally for scanning)
-#         uses: docker/build-push-action@v5
+#         uses: docker/build-push-action@v6
 #         with:
 #           context: .
 #           file: ./Dockerfile
 #           tags: |
-#             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
-#             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.commit_sha }}
+#             ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag_name }}
 #           load: true
 #           cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
 #           cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
@@ -67,145 +186,95 @@
 
 #       - name: Trivy Scan - Filesystem (non-blocking)
 #         run: |
-#           echo " Running Trivy filesystem scan..."
-#           trivy fs \
-#             --exit-code 0 \
-#             --no-progress \
-#             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
-#             .
+#           trivy fs --exit-code 0 --no-progress --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL .
 #         continue-on-error: true
 
 #       - name: Trivy Scan - Image (non-blocking)
 #         run: |
-#           IMAGE="${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
-#           echo " Scanning Docker image: ${IMAGE}"
-#           trivy image \
-#             --exit-code 0 \
-#             --no-progress \
-#             --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
-#             "${IMAGE}"
+#           IMAGE="${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag_name }}"
+#           trivy image --exit-code 0 --no-progress --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL "${IMAGE}"
 #         continue-on-error: true
 
 #       - name: Push image to DockerHub
-#         uses: docker/build-push-action@v5
+#         uses: docker/build-push-action@v6
 #         with:
 #           context: .
 #           file: ./Dockerfile
 #           push: true
 #           tags: |
-#             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}
-#             ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.commit_sha }}
+#             ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag_name }}
 #           cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
-
-#       - name: Create and push Git tag
-#         run: |
-#           TAG="${{ steps.tag.outputs.tag }}"
-#           git config user.name "github-actions[bot]"
-#           git config user.email "github-actions[bot]@users.noreply.github.com"
-#           git tag -a "${TAG}" -m "Automated release ${TAG}"
-#           git push origin "${TAG}"
 
 #       - name: Summary
 #         run: |
-#           echo " Pipeline completed successfully!"
-#           echo " Image pushed: ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.tag }}"
-#           echo " Commit tag: ${{ env.IMAGE_NAME }}:${{ steps.tag.outputs.commit_sha }}"
-#           echo "  Git tag created: ${{ steps.tag.outputs.tag }}"
+#           echo "✅ Pipeline completed successfully!"
+#           echo "Docker Image pushed: ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag_name }}"
 
 
-name: Build, Scan & Push on Tag or Commit
+
+name: Build and Push to Docker Registry
 
 on:
   push:
     branches:
-      - '*'       # Trigger on all branches
-    tags:
-      - '*'       # Also trigger when a tag is pushed
-
-env:
-  IMAGE_NAME: satya1122/myapp
-  TRIVY_VERSION: 0.58.0
+      - main
+      - develop
+      - 'feature/*'
+    paths:
+      - 'pkg/**'
+      - 'cmd/**'
+      - go.mod
+      - go.sum
+      - go.work
+      - go.work.sum
+      - Makefile
+      - Dockerfile
+      - '.github/**'
+      - 'internal/**'
 
 jobs:
-  build-scan-push:
+  build-and-push:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - name: Check out repository
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - name: Determine Image Tag
-        id: vars
-        run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            TAG_NAME="${GITHUB_REF_NAME}"
-          else
-            SHORT_SHA="$(git rev-parse --short HEAD)"
-            BRANCH_NAME="${GITHUB_REF_NAME//\//-}"
-            TAG_NAME="${BRANCH_NAME}-${SHORT_SHA}"
-          fi
-
-          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          echo "🟦 Using image tag: ${TAG_NAME}"
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      # - name: Check out Cluster API Wrapper
+      #   uses: actions/checkout@v4
+      #   with:
+      #     repository: 'san-data-systems/Clusterctl-CLI-wrapper'
+      #     ref: 'latest'
+      #     token: ${{ secrets.GH_PAT }}
+      #     path: 'internal/cluster_ctl_wrapper'
+      #     fetch-depth: 1
+      #     fetch-tags: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Log in to Docker registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build Docker image (load locally for scanning)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag_name }}
-          load: true
-          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
-
-      - name: Show built images
-        run: docker images | grep ${{ env.IMAGE_NAME }}
-
-      - name: Install Trivy
-        run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v${{ env.TRIVY_VERSION }}
-          trivy --version
-
-      - name: Trivy Scan - Filesystem (non-blocking)
-        run: |
-          trivy fs --exit-code 0 --no-progress --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL .
-        continue-on-error: true
-
-      - name: Trivy Scan - Image (non-blocking)
-        run: |
-          IMAGE="${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag_name }}"
-          trivy image --exit-code 0 --no-progress --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL "${IMAGE}"
-        continue-on-error: true
-
-      - name: Push image to DockerHub
-        uses: docker/build-push-action@v6
+      - name: Build and push image
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag_name }}
-          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+           satya1122/myapp:sha-${{ github.sha }}
+            
+            ${{ startsWith(github.ref, 'refs/heads/main') && 'satya1122/myapp:latest' || '' }}
+            ${{ startsWith(github.ref, 'refs/heads/main') && 'satya1122/myapp:v1.0.0' || '' }}
 
-      - name: Summary
-        run: |
-          echo "✅ Pipeline completed successfully!"
-          echo "Docker Image pushed: ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag_name }}"
+            ${{ startsWith(github.ref, 'refs/heads/develop') && 'satya1122/myapp:develop' || '' }}
+            ${{ startsWith(github.ref, 'refs/heads/develop') && format('satya1122/myapp:develop-%s', github.sha) || '' }}
+
+            ${{ startsWith(github.ref, 'refs/heads/feature/') && format('satya1122/myapp:feature-%s', github.ref_name) || '' }}
+            ${{ startsWith(github.ref, 'refs/heads/feature/') && format('satya1122/myapp:feature-%s-%s', github.ref_name, github.sha) || '' }}
