@@ -1,3 +1,27 @@
+name: sample-workflow
+#this is simple workflow yaml to run the echo hello world command which runs on every push
+on: [push]
+jobs:
+  hello-world-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hello World Step
+        run: echo "Hello, World!"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # # name: Build, Scan & Push on Commit
 
 # # on:
